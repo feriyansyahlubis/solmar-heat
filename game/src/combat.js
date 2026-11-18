@@ -1,70 +1,79 @@
-// Combat: the pistol. A ray from the player (or the car) toward the aim
-// point, tested against pedestrians, rival cars and police cars — no
-// projectiles, just a fast line, a flash and a result.
+// Pistol combat: ray test vs peds/cars, tracer + muzzle flash.
+
 import * as THREE from 'three';
 import { PLAYER } from './config.js';
 
 export function createCombat(scene) {
-  const tracerMat = new THREE.LineBasicMaterial({ color: 0xffe9a8, transparent: true, opacity: 0 });
-  const tracerGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+  const tracerMat = new THREE.LineBasicMaterial({ color: 0xffe08a, transparent: true, opacity: 0.9 });
+  const tracerGeo = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(),
+    new THREE.Vector3(),
+  ]);
   const tracer = new THREE.Line(tracerGeo, tracerMat);
-  tracer.frustumCulled = false;
+  tracer.visible = false;
   scene.add(tracer);
-  const flash = new THREE.PointLight(0xffd23a, 0, 12);
+  const flash = new THREE.PointLight(0xffc860, 0, 12);
   scene.add(flash);
-  let tracerTime = 0;
-  let flashTime = 0;
+  let tracerT = 0;
 
-  function rayHit(origin, dir, target, radius) {
-    const to = new THREE.Vector3().subVectors(target, origin);
-    const along = to.dot(dir);
-    if (along < 0 || along > PLAYER.PISTOL_RANGE) return Infinity;
-    const closest = new THREE.Vector3().copy(origin).addScaledVector(dir, along);
-    return closest.distanceTo(target) < radius ? along : Infinity;
-  }
-
-  // origin: Vector3 at the muzzle; dir: normalized aim direction.
-  // targets: { peds, cars } — cars are { pos, health, radius }.
   function shoot(origin, dir, targets) {
-    let bestDist = PLAYER.PISTOL_RANGE;
+    const end = origin.clone().addScaledVector(dir, PLAYER.PISTOL_RANGE);
     let best = null;
+    let bestD = PLAYER.PISTOL_RANGE;
+    let bestPoint = end.clone();
+
+    // Peds: sphere radius 1.1 at y 1.2.
     for (const ped of targets.peds || []) {
       if (ped.state === 'down') continue;
-      const d = rayHit(origin, dir, new THREE.Vector3(ped.pos.x, 1.2, ped.pos.z), 1.1);
-      if (d < bestDist) {
-        bestDist = d;
+      const c = new THREE.Vector3(ped.pos.x, 1.2, ped.pos.z);
+      const to = c.clone().sub(origin);
+      const along = to.dot(dir);
+      if (along < 0 || along > PLAYER.PISTOL_RANGE) continue;
+      const closest = origin.clone().addScaledVector(dir, along);
+      const d = closest.distanceTo(c);
+      if (d < 1.1 && along < bestD) {
+        bestD = along;
         best = { kind: 'ped', target: ped };
+        bestPoint = closest;
       }
     }
+    // Cars: sphere radius 2.4 at y 1.
     for (const car of targets.cars || []) {
-      const d = rayHit(origin, dir, new THREE.Vector3(car.pos.x, 1, car.pos.z), 2.4);
-      if (d < bestDist) {
-        bestDist = d;
+      const c = new THREE.Vector3(car.pos.x, 1, car.pos.z);
+      const to = c.clone().sub(origin);
+      const along = to.dot(dir);
+      if (along < 0 || along > PLAYER.PISTOL_RANGE) continue;
+      const closest = origin.clone().addScaledVector(dir, along);
+      const d = closest.distanceTo(c);
+      if (d < 2.4 && along < bestD) {
+        bestD = along;
         best = { kind: 'car', target: car };
+        bestPoint = closest;
       }
     }
-    const end = new THREE.Vector3().copy(origin).addScaledVector(dir, bestDist);
-    tracerGeo.setFromPoints([origin, end]);
-    tracerMat.opacity = 1;
-    tracerTime = 0.09;
-    flash.position.copy(origin);
-    flash.intensity = 60;
-    flashTime = 0.06;
+
     if (best) {
       if (best.kind === 'ped') best.target.health = 0;
-      else best.target.health -= PLAYER.PISTOL_DAMAGE;
+      else best.target.health = Math.max(0, best.target.health - PLAYER.PISTOL_DAMAGE);
     }
-    return { hit: best, end };
+
+    // Tracer + flash.
+    tracerGeo.setFromPoints([origin.clone(), bestPoint]);
+    tracer.visible = true;
+    tracerT = 0.07;
+    flash.position.copy(origin);
+    flash.intensity = 24;
+    return { hit: best, end: bestPoint };
   }
 
   function update(dt) {
-    if (tracerTime > 0) {
-      tracerTime -= dt;
-      if (tracerTime <= 0) tracerMat.opacity = 0;
-    }
-    if (flashTime > 0) {
-      flashTime -= dt;
-      if (flashTime <= 0) flash.intensity = 0;
+    if (tracerT > 0) {
+      tracerT -= dt;
+      tracerMat.opacity = Math.max(0, tracerT / 0.07) * 0.9;
+      if (tracerT <= 0) {
+        tracer.visible = false;
+        flash.intensity = 0;
+      }
     }
   }
 

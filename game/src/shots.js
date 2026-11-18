@@ -1,28 +1,33 @@
-// Scripted screenshot scenes behind ?shot=cover|chase|mission|city. Each one
-// stages the real game (a seeded world, real traffic, real police) and steers
-// it with a simple autopilot, so every screenshot is a frame of actual play.
-import * as THREE from 'three';
-import { WORLD, PITCH } from './config.js';
+// Staged screenshot scenes for ?shot=cover|chase|mission|city.
+// Each scene sets up the world once, then drives an autopilot update(dt)
+// until its duration elapses; main.js then sets window.__shotReady.
 
-// Steer a car to stay on its lane: aim at the road direction, correct for
-// drifting off the lane line (the lane is 3.5 m to the right of the centre).
-function laneFollow(car, axis, line, dir, targetSpeed) {
-  const lane = axis === 'x'
-    ? line + (dir > 0 ? 3.5 : -3.5)
-    : line + (dir > 0 ? -3.5 : 3.5);
-  const lateral = (axis === 'x' ? car.pos.z : car.pos.x) - lane;
-  const wantHeading = axis === 'x' ? (dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (dir > 0 ? 0 : Math.PI);
-  let diff = wantHeading - car.heading;
-  while (diff > Math.PI) diff -= Math.PI * 2;
-  while (diff < -Math.PI) diff += Math.PI * 2;
-  const steer = Math.max(-1, Math.min(1, diff * 1.8 - lateral * 0.06));
-  const throttle = car.speed < targetSpeed ? 1 : 0;
-  return { throttle, steer };
+import * as THREE from 'three';
+
+// Steer a car along a road line. lane centre = line +/- 3.5 by direction
+// (right-hand traffic). axis 'x' travels along Z, axis 'z' along X.
+export function laneFollow(car, axis, line, dir, targetSpeed, vehicles) {
+  const laneCentre = axis === 'x'
+    ? line + 3.5 * (dir > 0 ? -1 : 1)
+    : line + 3.5 * (dir > 0 ? 1 : -1);
+  const lateral = axis === 'x' ? car.pos.x - laneCentre : car.pos.z - laneCentre;
+  const baseHeading = axis === 'x'
+    ? dir > 0 ? 0 : Math.PI
+    : dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+  const corr = axis === 'x' ? -lateral * 0.05 * dir : lateral * 0.05 * dir;
+  const desired = baseHeading + corr;
+  let dh = desired - car.heading;
+  while (dh > Math.PI) dh -= Math.PI * 2;
+  while (dh < -Math.PI) dh += Math.PI * 2;
+  const steer = Math.max(-0.5, Math.min(0.5, dh * 2));
+  const throttle = car.speed < targetSpeed ? 0.8 : 0;
+  vehicles.drive(car, throttle, steer, false, 1 / 60);
+  return car;
 }
 
-// A police car holding formation behind the player's car, the way a chase
-// looks on screen: a fixed distance back, a little to one side, same speed.
-function formationChaser(car, playerCar, back, side, dt) {
+// Kinematic formation placement: chaser sits `back` metres behind and
+// `side` metres to the side of the player car, matching its heading.
+export function formationChaser(car, playerCar, back, side, dt) {
   const h = playerCar.heading;
   const fx = Math.sin(h);
   const fz = Math.cos(h);
@@ -31,158 +36,109 @@ function formationChaser(car, playerCar, back, side, dt) {
   car.pos.x = playerCar.pos.x - fx * back + rx * side;
   car.pos.z = playerCar.pos.z - fz * back + rz * side;
   car.heading = h;
-  car.speed = playerCar.speed;
   car.mesh.rotation.y = h;
-  for (const w of car.mesh.userData.wheels) w.rotation.x += (car.speed * dt) / 0.36;
+  car.speed = playerCar.speed;
 }
 
 export function stageShot(name, G) {
-  const { player, vehicles, traffic, police, missions, city } = G;
-  police.clear();
-  missions.beacon.visible = false;
-  // Clear the streets of whatever the free roam left behind, then restage.
-  for (const car of [...vehicles.cars]) {
-    if (!car.isPlayer) vehicles.remove(car);
+  const V = G.vehicles;
+  const noOp = () => {};
+
+  if (name === 'cover') {
+    // Red sports car north up the central avenue (x = 29, lane 32.5),
+    // oncoming traffic, two police cruisers in formation, 2 stars.
+    const car = V.spawn('sports', 32.5, 60, Math.PI, 0xc0392b);
+    car.speed = 16;
+    G.enterCar(car, true);
+    const oncoming = V.spawn('sedan', 25.5, -90, 0, 0x2e86c1);
+    oncoming.speed = 10;
+    const c1 = V.spawn('police', 36.5, 66, Math.PI, 0x1a1a1a);
+    const c2 = V.spawn('police', 28.5, 64, Math.PI, 0x1a1a1a);
+    G.police.setStars(2);
+    G.setObjective("Drive to Dante's Garage");
+    G.missions.beacon.visible = true;
+    return {
+      seconds: 3.0,
+      update(dt) {
+        laneFollow(car, 'x', 29, -1, 18, V);
+        laneFollow(oncoming, 'x', 29, 1, 10, V);
+        formationChaser(c1, car, 6, 4, dt);
+        formationChaser(c2, car, 4, -3, dt);
+        G.missions.beacon.position.set(29, 0, -180);
+      },
+    };
   }
-  const seed = 7;
-  void seed;
 
   if (name === 'chase') {
-    // A police chase down the east-west avenue: three stars, two cruisers
-    // right on the player's bumper, sirens on.
-    const car = vehicles.spawn('sports', 0, 90.5, Math.PI / 2, 0xd42a2a);
-    car.parked = false;
-    car.isPlayer = true;
+    // 3-star chase east along road z = 87 at ~30 m/s.
+    const car = V.spawn('sports', -60, 90.5, Math.PI / 2, 0xc0392b);
+    car.speed = 28;
     G.enterCar(car, true);
-    police.setStars(3);
-    const c1 = vehicles.spawn('police', -14, 90.5, Math.PI / 2);
-    c1.parked = false;
-    police.chasers.push({ car: c1, stuck: 0, formation: { back: 6, side: 4 } });
-    const c2 = vehicles.spawn('police', -26, 83.5, Math.PI / 2);
-    c2.parked = false;
-    police.chasers.push({ car: c2, stuck: 0, formation: { back: 4, side: -3 } });
-    for (const [x, z] of [[40, 83.5], [80, 83.5], [120, 83.5]]) {
-      const t = vehicles.spawn('sedan', x, z, -Math.PI / 2);
-      t.parked = false;
-      traffic.trafficCars.push({ car: t, road: { axis: 'x', line: 87, dir: -1 }, speed: 9, targetSpeed: 9 });
-    }
+    const ahead = V.spawn('taxi', 10, 90.5, Math.PI / 2, 0xf5c542);
+    ahead.speed = 12;
+    const c1 = V.spawn('police', -66, 94.5, Math.PI / 2, 0x1a1a1a);
+    const c2 = V.spawn('police', -64, 86.5, Math.PI / 2, 0x1a1a1a);
+    G.police.setStars(3);
     G.setObjective('Lose the heat or reach the pier');
-    G.setCameraMode('chase');
     return {
       seconds: 3.2,
-      step(dt) {
-        const input = laneFollow(car, 'x', 87, 1, 30);
-        vehicles.drive(car, input.throttle, input.steer, false, dt);
-        // The chasers hold formation on the player's bumper, sirens flashing.
-        for (const c of police.chasers) {
-          formationChaser(c.car, car, c.formation.back, c.formation.side, dt);
-        }
-        for (const t of traffic.trafficCars) {
-          const fx = Math.sin(t.car.heading);
-          const fz = Math.cos(t.car.heading);
-          t.car.pos.x += fx * t.car.speed * dt;
-          t.car.pos.z += fz * t.car.speed * dt;
-        }
+      update(dt) {
+        laneFollow(car, 'z', 87, 1, 30, V);
+        laneFollow(ahead, 'z', 87, 1, 12, V);
+        formationChaser(c1, car, 6, 4, dt);
+        formationChaser(c2, car, 4, -3, dt);
       },
     };
   }
 
   if (name === 'mission') {
-    // On foot at the bank for the big score: the beacon over the target, a
-    // rival car rolling in along the road, the objective on the HUD.
-    player.pos.set(58, 0, 85);
-    player.heading = Math.PI;
-    player.mesh.visible = true;
+    // Leo on foot in front of Solmar Bank, rival sedan rolling in.
+    // (exitCar is a no-op when not driving, so set the camera mode here.)
     G.exitCar(true);
-    const rival = vehicles.spawn('sedan', 72, 70, -Math.PI / 2, 0x1a1a1a);
-    rival.parked = false;
-    missions.rivals.push({ car: rival, checkpoints: 0, distToNext: Infinity });
-    missions.beacon.visible = true;
-    missions.beacon.position.set(58, 0, 67);
-    G.setObjective('Wreck the rival cars: 0 down');
     G.setCameraMode('foot');
+    G.player.pos.set(58, 0, 85);
+    G.player.heading = Math.PI;
+    G.player.mesh.rotation.y = Math.PI;
+    G.cameraYaw = 0;
+    const rival = V.spawn('sedan', 72, 70, Math.PI, 0x1a1a1a);
+    rival.speed = 0;
+    G.setObjective('Wreck the rival cars: 0 down');
     G.setCameraFrame(11, 6);
     G.setCameraLookAt(58, 4, 72);
-    G.cameraYaw = 0;
+    G.missions.beacon.visible = true;
     return {
       seconds: 2.2,
-      step(dt) {
-        const dx = player.pos.x - rival.pos.x;
-        const dz = player.pos.z - rival.pos.z;
-        const want = Math.atan2(dx, dz);
-        let diff = want - rival.heading;
-        while (diff > Math.PI) diff -= Math.PI * 2;
-        while (diff < -Math.PI) diff += Math.PI * 2;
-        vehicles.drive(rival, 1, Math.max(-1, Math.min(1, diff * 1.6)), false, dt);
-        if (rival.speed > 4) rival.speed = 4;
+      update(dt) {
+        // Rival rolls slowly toward the player, capped at 4 m/s.
+        const target = G.player.pos;
+        const desired = Math.atan2(target.x - rival.pos.x, target.z - rival.pos.z);
+        let dh = desired - rival.heading;
+        while (dh > Math.PI) dh -= Math.PI * 2;
+        while (dh < -Math.PI) dh += Math.PI * 2;
+        const steer = Math.max(-0.5, Math.min(0.5, dh * 1.5));
+        V.drive(rival, rival.speed < 4 ? 0.5 : 0, steer, false, dt);
+        G.missions.beacon.position.set(58, 0, 67);
       },
     };
   }
 
-  if (name === 'city') {
-    // The postcard: Leo on the beach at sunset, the skyline, the hotel and
-    // the palms behind him, traffic rolling down the beachfront road.
-    player.pos.set(0, 0, 292);
-    player.heading = Math.PI;
-    player.mesh.visible = true;
-    G.exitCar(true);
-    for (const [x, z, h] of [[-60, 264.5, Math.PI / 2], [30, 257.5, -Math.PI / 2], [90, 264.5, Math.PI / 2], [150, 257.5, -Math.PI / 2]]) {
-      const t = vehicles.spawn('sedan', x, z, h);
-      t.parked = false;
-      traffic.trafficCars.push({ car: t, road: { axis: 'x', line: 261, dir: h > 0 ? 1 : -1 }, speed: 9, targetSpeed: 9 });
-    }
-    G.setObjective('Free roam — press M for jobs');
-    G.setCameraMode('vista');
-    return {
-      seconds: 1.6,
-      step(dt) {
-        for (const t of traffic.trafficCars) {
-          const fx = Math.sin(t.car.heading);
-          const fz = Math.cos(t.car.heading);
-          t.car.pos.x += fx * t.car.speed * dt;
-          t.car.pos.z += fz * t.car.speed * dt;
-        }
-      },
-    };
-  }
-
-  // Default: cover. Leo driving his sports car up the central avenue, palms
-  // on both sides, traffic ahead, two cruisers behind, two stars on the HUD.
-  const car = vehicles.spawn('sports', 32.5, 40, Math.PI, 0xd42a2a);
-  car.parked = false;
-  car.isPlayer = true;
-  G.enterCar(car, true);
-  police.setStars(2);
-  const c1 = vehicles.spawn('police', 32.5, 78, Math.PI);
-  c1.parked = false;
-  police.chasers.push({ car: c1, stuck: 0, formation: { back: 6, side: 4 } });
-  const c2 = vehicles.spawn('police', 25.5, 92, Math.PI);
-  c2.parked = false;
-  police.chasers.push({ car: c2, stuck: 0, formation: { back: 4, side: -3 } });
-  // Oncoming traffic in the other lane, so the player passes real traffic.
-  for (const [x, z] of [[25.5, -20], [25.5, -70], [25.5, -120]]) {
-    const t = vehicles.spawn('sedan', x, z, 0);
-    t.parked = false;
-    traffic.trafficCars.push({ car: t, road: { axis: 'z', line: 29, dir: 1 }, speed: 9, targetSpeed: 9 });
-  }
-  missions.beacon.visible = true;
-  missions.beacon.position.set(29, 0, -180);
-  G.setObjective('Drive to Dante’s Garage');
-  G.setCameraMode('chase');
+  // city (default): beach postcard, Leo on foot, vista camera.
+  G.exitCar(true);
+  G.player.pos.set(0, 0, 292);
+  G.player.heading = Math.PI;
+  G.player.mesh.rotation.y = Math.PI;
+  G.cameraYaw = 0;
+  const b1 = V.spawn('sedan', -60, 264.5, Math.PI / 2, 0x27ae60);
+  b1.speed = 9;
+  const b2 = V.spawn('sports', 80, 257.5, -Math.PI / 2, 0xe67e22);
+  b2.speed = 11;
+  G.setObjective('Free roam — press M for jobs');
+  G.setCameraMode('vista');
   return {
-    seconds: 3.0,
-    step(dt) {
-      const input = laneFollow(car, 'z', 29, -1, 26);
-      vehicles.drive(car, input.throttle, input.steer, false, dt);
-      for (const c of police.chasers) {
-        formationChaser(c.car, car, c.formation.back, c.formation.side, dt);
-      }
-      for (const t of traffic.trafficCars) {
-        const fx = Math.sin(t.car.heading);
-        const fz = Math.cos(t.car.heading);
-        t.car.pos.x += fx * t.car.speed * dt;
-        t.car.pos.z += fz * t.car.speed * dt;
-      }
+    seconds: 1.6,
+    update(dt) {
+      laneFollow(b1, 'z', 261, 1, 9, V);
+      laneFollow(b2, 'z', 261, -1, 11, V);
     },
   };
 }

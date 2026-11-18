@@ -1,302 +1,339 @@
-// The story: Leo Vega owes $10,000. Five jobs for Dante, each one a step
-// toward clearing the debt — and each one teaching a system of the game.
+// Story missions: steal, deliver, escape, race, heist. Debt $10,000.
+
 import * as THREE from 'three';
-import { WORLD } from './config.js';
-import { ROAD_LINES } from './city.js';
-
-const DELIVERY_POINTS = [
-  { x: -203, z: 87 },
-  { x: 145, z: -145 },
-  { x: 87, z: 203 },
-];
-
-const RACE_CHECKPOINTS = [
-  { x: -145, z: -87 }, { x: 87, z: -145 }, { x: 203, z: -29 }, { x: 145, z: 145 },
-  { x: -29, z: 203 }, { x: -203, z: 87 }, { x: -203, z: -203 }, { x: -87, z: -87 },
-];
+import { MISSIONS } from './config.js';
 
 export const MISSION_LIST = [
   {
-    id: 'welcome',
+    id: 0,
     title: 'Welcome Back',
-    brief: 'Dante needs a driver. Steal any car and bring it to his garage.',
     reward: 300,
+    brief: "Leo's back in Solmar. Steal any car and bring it to Dante's Garage.",
   },
   {
-    id: 'pizza',
+    id: 1,
     title: 'Pizza Run',
-    brief: 'Three deliveries, one very impatient city. 150 seconds on the clock.',
     reward: 500,
+    brief: 'Three deliveries across town. 150 seconds on the clock.',
   },
   {
-    id: 'getaway',
+    id: 2,
     title: 'The Getaway',
-    brief: 'The job went loud. Three stars on your head — lose the heat or reach the pier.',
     reward: 800,
+    brief: 'Three stars on your tail. Lose the heat or reach the pier in 90 seconds.',
   },
   {
-    id: 'street-king',
+    id: 3,
     title: 'Street King',
-    brief: 'Eight checkpoints, three rivals, one crown. Finish in the top two.',
     reward: 1200,
+    brief: 'Eight checkpoints against three rivals. Finish top 2.',
   },
   {
-    id: 'big-score',
+    id: 4,
     title: 'The Big Score',
-    brief: 'Four rival cars guard the bank job. Wreck them all, then vanish at the pier.',
     reward: 2500,
+    brief: 'Wreck four rival cars around the bank, then escape to the pier.',
   },
 ];
 
-function makeBeacon() {
-  const group = new THREE.Group();
-  const beam = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.6, 1.6, 60, 12, 1, true),
-    new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false }),
-  );
-  beam.position.y = 30;
-  group.add(beam);
-  const diamond = new THREE.Mesh(
-    new THREE.OctahedronGeometry(1.1),
-    new THREE.MeshBasicMaterial({ color: 0xffd23a }),
-  );
-  diamond.position.y = 8;
-  group.add(diamond);
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(2.2, 3, 24),
-    new THREE.MeshBasicMaterial({ color: 0xffd23a, transparent: true, opacity: 0.8, side: THREE.DoubleSide }),
-  );
-  ring.rotation.x = -Math.PI / 2;
-  ring.position.y = 0.2;
-  group.add(ring);
-  group.userData = { diamond, ring };
-  return group;
-}
+const PIZZA_POINTS = [
+  new THREE.Vector3(-203, 0, 87),
+  new THREE.Vector3(145, 0, -145),
+  new THREE.Vector3(87, 0, 203),
+];
+
+const RACE_POINTS = [
+  new THREE.Vector3(-145, 0, -87),
+  new THREE.Vector3(87, 0, -145),
+  new THREE.Vector3(203, 0, -29),
+  new THREE.Vector3(145, 0, 145),
+  new THREE.Vector3(-29, 0, 203),
+  new THREE.Vector3(-203, 0, 87),
+  new THREE.Vector3(-203, 0, -203),
+  new THREE.Vector3(-87, 0, -87),
+];
 
 export function createMissions(scene, landmarks, vehicles, rng, events) {
-  const beacon = makeBeacon();
+  const beacon = new THREE.Group();
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(1.4, 1.4, 34, 12, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xffd24d, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false }),
+  );
+  beam.position.y = 17;
+  beacon.add(beam);
+  const diamond = new THREE.Mesh(
+    new THREE.OctahedronGeometry(1.3),
+    new THREE.MeshBasicMaterial({ color: 0xffd24d, transparent: true, opacity: 0.9 }),
+  );
+  diamond.position.y = 3;
+  beacon.add(diamond);
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(2.6, 3.4, 32),
+    new THREE.MeshBasicMaterial({ color: 0xffd24d, transparent: true, opacity: 0.8, side: THREE.DoubleSide }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.15;
+  beacon.add(ring);
   beacon.visible = false;
   scene.add(beacon);
-  const rivals = [];
-  let current = -1; // index into MISSION_LIST, -1 = none active
-  let step = 0;
-  let stepState = {};
-  let timer = 0;
+
+  let current = -1;
   let active = false;
+  let timer = 0;
+  let checkpoint = 0;
+  let deliveries = 0;
+  let wrecked = 0;
+  let phase = 'main';
+  let rivals = [];
+  let rivalState = new Map();
+  let ramCooldown = new Map();
 
-  function targetPos() {
-    if (!active || current < 0) return null;
-    const m = MISSION_LIST[current];
-    if (m.id === 'welcome') return step === 0 ? null : landmarks.garage;
-    if (m.id === 'pizza') return DELIVERY_POINTS[stepState.delivered] ? new THREE.Vector3(DELIVERY_POINTS[stepState.delivered].x, 0, DELIVERY_POINTS[stepState.delivered].z) : null;
-    if (m.id === 'getaway') return landmarks.pier;
-    if (m.id === 'street-king') return new THREE.Vector3(RACE_CHECKPOINTS[stepState.next].x, 0, RACE_CHECKPOINTS[stepState.next].z);
-    if (m.id === 'big-score') return step === 0 ? (rivals[0] ? rivals[0].car.pos : null) : landmarks.pier;
-    return null;
+  function clearRivals() {
+    for (const r of rivals) vehicles.remove(r);
+    rivals = [];
+    rivalState = new Map();
+    ramCooldown = new Map();
   }
 
-  function objectiveText() {
-    if (!active || current < 0) return 'Free roam — press M for jobs';
-    const m = MISSION_LIST[current];
-    if (m.id === 'welcome') return step === 0 ? 'Steal any car (E near a car)' : 'Drive to Dante’s Garage';
-    if (m.id === 'pizza') return `Deliver the pizzas: ${stepState.delivered}/3 — ${Math.ceil(timer)}s left`;
-    if (m.id === 'getaway') return `Lose the heat or reach the pier — ${Math.ceil(timer)}s left`;
-    if (m.id === 'street-king') return `Race! Checkpoint ${stepState.next + 1}/8 — you are ${racePosition()}${ordinalSuffix(racePosition())}`;
-    if (m.id === 'big-score') return step === 0 ? `Wreck the rival cars: ${4 - rivals.length} down` : 'Get to the pier and vanish';
-    return m.title;
+  function spawnRival(type, x, z, heading) {
+    const car = vehicles.spawn(type, x, z, heading, undefined);
+    car.parked = false;
+    rivals.push(car);
+    rivalState.set(car.id, { checkpoint: 0, stuckT: 0, finished: false, lastPos: new THREE.Vector3(x, 0, z) });
+    return car;
   }
 
-  function ordinalSuffix(n) {
-    return n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th';
-  }
-
-  function racePosition() {
-    let ahead = 1;
-    for (const r of rivals) {
-      if (r.checkpoints > stepState.next) ahead += 1;
-      else if (r.checkpoints === stepState.next && r.distToNext < stepState.distToNext) ahead += 1;
-    }
-    return ahead;
-  }
-
-  function startMission(index) {
-    current = index;
-    step = 0;
-    stepState = { delivered: 0, next: 0, distToNext: Infinity };
+  function startMission(i) {
+    if (i < 0 || i >= MISSION_LIST.length) return;
+    clearRivals();
+    current = i;
     active = true;
-    const m = MISSION_LIST[index];
-    events.toast(`${m.title} — $${m.reward}`);
-    events.objective(objectiveText());
-    if (m.id === 'pizza') timer = 150;
-    if (m.id === 'getaway') {
+    timer = 0;
+    checkpoint = 0;
+    deliveries = 0;
+    wrecked = 0;
+    phase = 'main';
+    const m = MISSION_LIST[i];
+    if (i === 1) timer = 150;
+    if (i === 2) {
       timer = 90;
       events.setWanted(3);
     }
-    if (m.id === 'street-king') {
-      for (let i = 0; i < 3; i += 1) {
-        const car = vehicles.spawn(i === 0 ? 'sports' : 'sedan', -160 + i * 8, -100, Math.PI / 2, [0xd42a2a, 0x2a2a2e, 0x4a7fb5][i]);
-        car.parked = false;
-        rivals.push({ car, checkpoints: 0, distToNext: Infinity });
-      }
+    if (i === 3) {
+      // Three rivals line up near the player start area.
+      const spots = [
+        [-160, -70, Math.PI / 2],
+        [-150, -70, Math.PI / 2],
+        [-140, -70, Math.PI / 2],
+      ];
+      const types = ['sports', 'sedan', 'sports'];
+      spots.forEach(([x, z, h], k) => spawnRival(types[k], x, z, h));
     }
-    if (m.id === 'big-score') {
-      for (let i = 0; i < 4; i += 1) {
-        const angle = (i / 4) * Math.PI * 2;
-        const car = vehicles.spawn('sedan', landmarks.bank.x + Math.cos(angle) * 30, landmarks.bank.z + Math.sin(angle) * 30, angle, 0x1a1a1a);
-        car.parked = false;
-        car.health = 100;
-        rivals.push({ car, checkpoints: 0, distToNext: Infinity });
-      }
+    if (i === 4) {
+      const b = landmarks.bank;
+      const spots = [
+        [b.x + 24, b.z - 18],
+        [b.x - 24, b.z + 18],
+        [b.x + 26, b.z + 22],
+        [b.x - 26, b.z - 20],
+      ];
+      spots.forEach(([x, z], k) => spawnRival(k % 2 === 0 ? 'sedan' : 'sports', x, z, rng.range(0, Math.PI * 2)));
     }
-    updateBeacon();
-  }
-
-  function clearRivals() {
-    for (const r of rivals) vehicles.remove(r.car);
-    rivals.length = 0;
-  }
-
-  function completeMission() {
-    const m = MISSION_LIST[current];
-    clearRivals();
-    active = false;
-    beacon.visible = false;
-    events.money(m.reward);
-    events.complete(m);
-    current = -1;
-  }
-
-  function failMission(reason) {
-    clearRivals();
-    active = false;
-    beacon.visible = false;
-    events.fail(MISSION_LIST[current].title, reason);
-    current = -1;
-  }
-
-  function updateBeacon() {
-    const target = targetPos();
-    if (target) {
-      beacon.visible = true;
-      beacon.position.set(target.x, 0, target.z);
-    } else {
-      beacon.visible = false;
-    }
-  }
-
-  function update(dt, ctx, time) {
-    // Beacon animation.
-    if (beacon.visible) {
-      beacon.userData.diamond.rotation.y += dt * 2;
-      beacon.userData.diamond.position.y = 8 + Math.sin(time * 2.4) * 0.8;
-      const s = 1 + Math.sin(time * 3) * 0.12;
-      beacon.userData.ring.scale.set(s, s, 1);
-    }
-    if (!active || current < 0) return;
-    const m = MISSION_LIST[current];
-    const playerPos = ctx.playerPos;
-    timer -= dt;
-
-    if (m.id === 'welcome') {
-      if (step === 0 && ctx.inCar) {
-        step = 1;
-        updateBeacon();
-      } else if (step === 1) {
-        const d = Math.hypot(playerPos.x - landmarks.garage.x, playerPos.z - landmarks.garage.z);
-        if (d < 12) completeMission();
-      }
-    } else if (m.id === 'pizza') {
-      if (timer <= 0) { failMission('Out of time — the pizzas got cold.'); return; }
-      const point = DELIVERY_POINTS[stepState.delivered];
-      if (point) {
-        const d = Math.hypot(playerPos.x - point.x, playerPos.z - point.z);
-        if (d < 10) {
-          stepState.delivered += 1;
-          events.toast(`Delivered ${stepState.delivered}/3`);
-          events.pickup();
-          if (stepState.delivered >= 3) completeMission();
-          else updateBeacon();
-        }
-      }
-    } else if (m.id === 'getaway') {
-      if (timer <= 0) { failMission('The heat never let up.'); return; }
-      const d = Math.hypot(playerPos.x - landmarks.pier.x, playerPos.z - landmarks.pier.z);
-      if (ctx.wanted === 0 || d < 14) completeMission();
-    } else if (m.id === 'street-king') {
-      if (timer <= 0) { failMission('Too slow — the crown went to someone else.'); return; }
-      // Rivals chase the checkpoints at a fixed pace.
-      for (const r of rivals) {
-        if (r.checkpoints >= RACE_CHECKPOINTS.length) continue;
-        const cp = RACE_CHECKPOINTS[r.checkpoints];
-        const dx = cp.x - r.car.pos.x;
-        const dz = cp.z - r.car.pos.z;
-        const dist = Math.hypot(dx, dz);
-        r.distToNext = dist;
-        const wantHeading = Math.atan2(dx, dz);
-        let diff = wantHeading - r.car.heading;
-        while (diff > Math.PI) diff -= Math.PI * 2;
-        while (diff < -Math.PI) diff += Math.PI * 2;
-        vehicles.drive(r.car, 1, Math.max(-1, Math.min(1, diff * 1.8)), false, dt);
-        if (dist < 10) r.checkpoints += 1;
-      }
-      const cp = RACE_CHECKPOINTS[stepState.next];
-      if (cp) {
-        const d = Math.hypot(playerPos.x - cp.x, playerPos.z - cp.z);
-        stepState.distToNext = d;
-        if (d < 10) {
-          stepState.next += 1;
-          events.pickup();
-          if (stepState.next >= RACE_CHECKPOINTS.length) {
-            const place = racePosition();
-            if (place <= 2) completeMission();
-            else failMission(`You finished ${place}${ordinalSuffix(place)} — top two only.`);
-          } else {
-            updateBeacon();
-          }
-        }
-      }
-    } else if (m.id === 'big-score') {
-      if (step === 0) {
-        // Rivals ram the player; the player wrecks them by ramming or shooting.
-        for (const r of rivals) {
-          const dx = playerPos.x - r.car.pos.x;
-          const dz = playerPos.z - r.car.pos.z;
-          const dist = Math.hypot(dx, dz) || 1;
-          const wantHeading = Math.atan2(dx, dz);
-          let diff = wantHeading - r.car.heading;
-          while (diff > Math.PI) diff -= Math.PI * 2;
-          while (diff < -Math.PI) diff += Math.PI * 2;
-          vehicles.drive(r.car, 1, Math.max(-1, Math.min(1, diff * 1.6)), false, dt);
-          if (dist < 4.5 && ctx.playerCarSpeed > 6) {
-            r.car.health -= 26;
-            ctx.onRivalHit(r.car);
-          }
-        }
-        for (let i = rivals.length - 1; i >= 0; i -= 1) {
-          if (rivals[i].car.health <= 0) {
-            rivals[i].car.speed = 0;
-            rivals[i].car.health = 0;
-            events.toast('Rival wrecked!');
-            vehicles.remove(rivals[i].car);
-            rivals.splice(i, 1);
-          }
-        }
-        if (rivals.length === 0) {
-          step = 1;
-          updateBeacon();
-          events.toast('All rivals down — get to the pier!');
-        }
-      } else {
-        const d = Math.hypot(playerPos.x - landmarks.pier.x, playerPos.z - landmarks.pier.z);
-        if (d < 14) completeMission();
-      }
-    }
+    beacon.visible = true;
+    events.toast(`${m.title} — $${m.reward}`);
     events.objective(objectiveText());
   }
 
   function startNext() {
     const next = events.completedCount();
     if (next < MISSION_LIST.length) startMission(next);
+  }
+
+  function finishMission() {
+    const m = MISSION_LIST[current];
+    active = false;
+    beacon.visible = false;
+    clearRivals();
+    events.complete(m);
+  }
+
+  function failMission(reason) {
+    const m = MISSION_LIST[current];
+    active = false;
+    beacon.visible = false;
+    clearRivals();
+    events.fail(m.title, reason);
+  }
+
+  function driveToward(car, target, dt, throttle) {
+    const desired = Math.atan2(target.x - car.pos.x, target.z - car.pos.z);
+    let dh = desired - car.heading;
+    while (dh > Math.PI) dh -= Math.PI * 2;
+    while (dh < -Math.PI) dh += Math.PI * 2;
+    const steer = Math.max(-0.55, Math.min(0.55, dh * 1.6));
+    vehicles.drive(car, throttle, steer, false, dt);
+    return dh;
+  }
+
+  function update(dt, ctx, time) {
+    // Beacon animation.
+    beacon.rotation.y += dt * 0.8;
+    diamond.position.y = 3 + Math.sin(time * 2) * 0.5;
+    diamond.rotation.y += dt * 1.5;
+    const pulse = 1 + Math.sin(time * 3) * 0.12;
+    ring.scale.set(pulse, pulse, 1);
+    const target = targetPos();
+    if (active && target) beacon.position.set(target.x, 0, target.z);
+    if (!active) return;
+
+    const pp = ctx.playerPos;
+
+    if (current === 0) {
+      // Welcome Back: steal any car, drive to the garage marker.
+      if (ctx.inCar) {
+        const d = Math.hypot(pp.x - landmarks.garage.x, pp.z - landmarks.garage.z);
+        if (d < 10) finishMission();
+      }
+    } else if (current === 1) {
+      timer -= dt;
+      if (timer <= 0) {
+        failMission('Out of time on the pizza run.');
+        return;
+      }
+      const p = PIZZA_POINTS[deliveries];
+      const d = Math.hypot(pp.x - p.x, pp.z - p.z);
+      if (d < 8) {
+        deliveries++;
+        events.pickup();
+        events.toast(`Delivery ${deliveries}/3 done`);
+        if (deliveries >= 3) finishMission();
+        else events.objective(objectiveText());
+      }
+    } else if (current === 2) {
+      timer -= dt;
+      if (timer <= 0) {
+        failMission('The heat caught up with you.');
+        return;
+      }
+      if (ctx.wanted === 0) {
+        finishMission();
+        return;
+      }
+      const d = Math.hypot(pp.x - landmarks.pier.x, pp.z - landmarks.pier.z);
+      if (d < 12) finishMission();
+    } else if (current === 3) {
+      // Race: rivals drive the checkpoints too.
+      for (const r of rivals) {
+        const st = rivalState.get(r.id);
+        if (!st || st.finished) continue;
+        if (r.health <= 0) {
+          st.finished = true; // wrecked rival drops out (counts as last)
+          continue;
+        }
+        const cp = RACE_POINTS[st.checkpoint];
+        driveToward(r, cp, dt, r.speed > 26 ? 0 : 0.9);
+        const d = Math.hypot(r.pos.x - cp.x, r.pos.z - cp.z);
+        if (d < 10) {
+          st.checkpoint++;
+          if (st.checkpoint >= RACE_POINTS.length) st.finished = true;
+        }
+        // Stuck recovery.
+        st.stuckT += dt;
+        if (st.stuckT > 2) {
+          const moved = Math.hypot(r.pos.x - st.lastPos.x, r.pos.z - st.lastPos.z);
+          if (moved < 2) r.heading += Math.PI * 0.6;
+          st.lastPos.copy(r.pos);
+          st.stuckT = 0;
+        }
+      }
+      const cp = RACE_POINTS[checkpoint];
+      const d = Math.hypot(pp.x - cp.x, pp.z - cp.z);
+      if (d < 10) {
+        checkpoint++;
+        events.toast(`Checkpoint ${checkpoint}/8`);
+        if (checkpoint >= RACE_POINTS.length) {
+          const rivalsAhead = rivals.filter((r) => rivalState.get(r.id).finished).length;
+          const rank = 1 + rivalsAhead;
+          if (rank <= 2) finishMission();
+          else failMission(`Finished ${rank}th — need top 2.`);
+        } else {
+          events.objective(objectiveText());
+        }
+      }
+    } else if (current === 4) {
+      if (phase === 'main') {
+        // Rivals ram the player; player rams back at speed.
+        for (const r of [...rivals]) {
+          if (r.health <= 0) continue;
+          driveToward(r, pp, dt, 1);
+          if (ctx.inCar && ctx.playerCarSpeed > 6) {
+            const d = Math.hypot(r.pos.x - pp.x, r.pos.z - pp.z);
+            const cd = ramCooldown.get(r.id) || 0;
+            if (d < 4.5 && cd <= 0) {
+              r.health -= 26;
+              ramCooldown.set(r.id, 0.5);
+              if (ctx.onRivalHit) ctx.onRivalHit(r);
+            }
+          }
+        }
+        for (const [id, cd] of ramCooldown) ramCooldown.set(id, cd - dt);
+        // Count wrecked rivals.
+        for (let i = rivals.length - 1; i >= 0; i--) {
+          const r = rivals[i];
+          if (r.health <= 0) {
+            vehicles.remove(r);
+            rivals.splice(i, 1);
+            wrecked++;
+            events.toast(`Rival wrecked! ${wrecked}/4 down`);
+          }
+        }
+        if (wrecked >= 4) {
+          phase = 'escape';
+          events.toast('All rivals down — escape to the pier!');
+          events.objective(objectiveText());
+        }
+      } else {
+        const d = Math.hypot(pp.x - landmarks.pier.x, pp.z - landmarks.pier.z);
+        if (d < 12) finishMission();
+      }
+    }
+  }
+
+  function objectiveText() {
+    if (!active) return '';
+    if (current === 0) return "Steal a car — bring it to Dante's Garage";
+    if (current === 1) return `Pizza Run: deliver ${deliveries + 1}/3 — ${Math.ceil(timer)}s left`;
+    if (current === 2) return `The Getaway: lose the heat or reach the pier — ${Math.ceil(timer)}s`;
+    if (current === 3) return `Street King: checkpoint ${checkpoint + 1}/8 — finish top 2`;
+    if (current === 4) {
+      return phase === 'main'
+        ? `The Big Score: wreck the rival cars — ${wrecked}/4 down`
+        : 'The Big Score: escape to the pier!';
+    }
+    return '';
+  }
+
+  function targetPos() {
+    if (!active) return null;
+    if (current === 0) return landmarks.garage.clone();
+    if (current === 1) return PIZZA_POINTS[deliveries].clone();
+    if (current === 2) return landmarks.pier.clone();
+    if (current === 3) return RACE_POINTS[Math.min(checkpoint, RACE_POINTS.length - 1)].clone();
+    if (current === 4) {
+      if (phase === 'escape') return landmarks.pier.clone();
+      // Nearest live rival.
+      let best = null;
+      let bestD = Infinity;
+      for (const r of rivals) {
+        const d = Math.hypot(r.pos.x - landmarks.bank.x, r.pos.z - landmarks.bank.z);
+        if (d < bestD) {
+          bestD = d;
+          best = r;
+        }
+      }
+      return best ? new THREE.Vector3(best.pos.x, 0, best.pos.z) : landmarks.bank.clone();
+    }
+    return null;
   }
 
   return {
@@ -306,9 +343,18 @@ export function createMissions(scene, landmarks, vehicles, rng, events) {
     update,
     objectiveText,
     targetPos,
-    rivals,
-    get active() { return active; },
-    get current() { return current; },
+    get rivals() {
+      return rivals;
+    },
+    get active() {
+      return active;
+    },
+    get current() {
+      return current;
+    },
     beacon,
+    get debtGoal() {
+      return MISSIONS.DEBT_GOAL;
+    },
   };
 }

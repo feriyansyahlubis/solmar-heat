@@ -1,5 +1,5 @@
-// A small seeded random generator (mulberry32) plus the helpers the world
-// builder uses, so the same seed always builds the same city.
+// Deterministic seeded random (mulberry32).
+
 export function createRandom(seed) {
   let a = seed >>> 0;
   function next() {
@@ -17,8 +17,8 @@ export function createRandom(seed) {
     int(min, max) {
       return Math.floor(min + next() * (max - min + 1));
     },
-    pick(list) {
-      return list[Math.floor(next() * list.length)];
+    pick(arr) {
+      return arr[Math.floor(next() * arr.length)];
     },
     chance(p) {
       return next() < p;

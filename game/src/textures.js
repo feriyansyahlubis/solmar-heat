@@ -1,164 +1,183 @@
-// Canvas-generated textures: every surface in Solmar City is painted in code,
-// so the game ships no image files at all.
-import * as THREE from 'three';
-import { WORLD, PITCH, HALF_CITY } from './config.js';
+// Procedural canvas textures: ground map, building facades, signs, ocean, sky.
 
-// Warm sun-soaked palette for the building facades.
-export const FACADE_COLORS = ['#f2c9a0', '#f7e3c3', '#e8a87c', '#a8c8d8', '#f5d76e', '#d8b4a0', '#b8d8b8', '#e8b4b8', '#c9b8e8', '#f0ead8'];
+import { WORLD, PITCH, HALF_CITY, ROAD_LINES } from './config.js';
 
-function canvasTexture(width, height, draw) {
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  draw(canvas.getContext('2d'), width, height);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 4;
-  return texture;
+export const FACADE_COLORS = [
+  '#e8a87c', '#d98e6a', '#f0c297', '#c97b5e', '#e5b567',
+  '#d9a05b', '#eab676', '#c68a6b', '#f2d3a0', '#b5765a',
+];
+
+function makeCanvas(w, h) {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  return c;
 }
 
-// The whole ground in one 2048px canvas: roads, sidewalks, crosswalks, block
-// tints, the beach and the waterline. World x/z in [-300, 420] maps onto it.
+// One 2048px canvas for the whole ground. World [-300, 420]^2 maps onto it;
+// the plane is 720x720 at (60, 0, 60) with default flipY, so canvas top is
+// north (-Z) and the beach sits at south (+Z).
 export function makeGroundTexture(rng) {
-  const SIZE = 2048;
-  const MIN = -300;
-  const MAX = 420;
-  const scale = SIZE / (MAX - MIN);
-  const px = (v) => (v - MIN) * scale;
-  return canvasTexture(SIZE, SIZE, (ctx) => {
-    // Base: sun-bleached pavement.
-    ctx.fillStyle = '#b8a88f';
-    ctx.fillRect(0, 0, SIZE, SIZE);
-    // Beach sand (south edge) and the ocean beyond it.
-    ctx.fillStyle = '#e8d29a';
-    ctx.fillRect(0, px(WORLD.BEACH_Z), SIZE, px(WORLD.OCEAN_Z) - px(WORLD.BEACH_Z));
-    ctx.fillStyle = '#2e7fc2';
-    ctx.fillRect(0, px(WORLD.OCEAN_Z), SIZE, SIZE - px(WORLD.OCEAN_Z));
-    ctx.fillStyle = '#3a8fd0';
-    for (let i = 0; i < 40; i += 1) {
-      const y = px(WORLD.OCEAN_Z) + rng.range(0, SIZE - px(WORLD.OCEAN_Z));
-      ctx.fillRect(0, y, SIZE, 2);
-    }
-    // Blocks: slightly varied concrete, a few green parks.
-    for (let i = 0; i < WORLD.GRID; i += 1) {
-      for (let j = 0; j < WORLD.GRID; j += 1) {
-        const cx = (i - 4) * PITCH;
-        const cz = (j - 4) * PITCH;
-        const isPark = rng.chance(0.12);
-        ctx.fillStyle = isPark ? '#7fb069' : `hsl(${rng.range(28, 42)}, ${rng.range(18, 30)}%, ${rng.range(62, 72)}%)`;
-        ctx.fillRect(px(cx - WORLD.BLOCK / 2), px(cz - WORLD.BLOCK / 2), WORLD.BLOCK * scale, WORLD.BLOCK * scale);
+  const S = 2048;
+  const c = makeCanvas(S, S);
+  const g = c.getContext('2d');
+  const W0 = -300;
+  const SPAN = 720;
+  const px = (v) => ((v - W0) / SPAN) * S;
+
+  // Base: warm sand.
+  g.fillStyle = '#cbb28a';
+  g.fillRect(0, 0, S, S);
+
+  // City blocks: slightly varied pavement tints.
+  for (let i = 0; i < 9; i++) {
+    for (let j = 0; j < 9; j++) {
+      const x0 = -HALF_CITY + i * PITCH + WORLD.ROAD / 2;
+      const z0 = -HALF_CITY + j * PITCH + WORLD.ROAD / 2;
+      const shade = 0.9 + rng.next() * 0.18;
+      const base = [196, 178, 150];
+      g.fillStyle = `rgb(${Math.floor(base[0] * shade)},${Math.floor(base[1] * shade)},${Math.floor(base[2] * shade)})`;
+      g.fillRect(px(x0), px(z0), px(WORLD.BLOCK) - px(0), px(WORLD.BLOCK) - px(0));
+      // Park green tint on some blocks.
+      if (rng.chance(0.12)) {
+        g.fillStyle = 'rgba(96, 140, 82, 0.55)';
+        g.fillRect(px(x0), px(z0), px(WORLD.BLOCK) - px(0), px(WORLD.BLOCK) - px(0));
       }
     }
-    // Roads: dark asphalt strips along every grid line, both directions.
-    ctx.fillStyle = '#3a3a40';
-    for (let k = 0; k <= WORLD.GRID; k += 1) {
-      const c = (k - 4.5) * PITCH;
-      ctx.fillRect(px(c - WORLD.ROAD / 2), px(-HALF_CITY - WORLD.ROAD / 2), WORLD.ROAD * scale, (2 * HALF_CITY + WORLD.ROAD) * scale);
-      ctx.fillRect(px(-HALF_CITY - WORLD.ROAD / 2), px(c - WORLD.ROAD / 2), (2 * HALF_CITY + WORLD.ROAD) * scale, WORLD.ROAD * scale);
+  }
+
+  // Roads: dark asphalt bands along every road line.
+  g.fillStyle = '#3d4148';
+  for (const line of ROAD_LINES) {
+    g.fillRect(px(line - WORLD.ROAD / 2), px(-HALF_CITY - WORLD.ROAD / 2), px(WORLD.ROAD) - px(0), px(2 * HALF_CITY + WORLD.ROAD) - px(0));
+    g.fillRect(px(-HALF_CITY - WORLD.ROAD / 2), px(line - WORLD.ROAD / 2), px(2 * HALF_CITY + WORLD.ROAD) - px(0), px(WORLD.ROAD) - px(0));
+  }
+
+  // Centre dashes + edge lines.
+  g.strokeStyle = '#e8d44d';
+  g.lineWidth = 2;
+  g.setLineDash([14, 18]);
+  for (const line of ROAD_LINES) {
+    g.beginPath();
+    g.moveTo(px(line), px(-HALF_CITY));
+    g.lineTo(px(line), px(HALF_CITY));
+    g.stroke();
+    g.beginPath();
+    g.moveTo(px(-HALF_CITY), px(line));
+    g.lineTo(px(HALF_CITY), px(line));
+    g.stroke();
+  }
+  g.setLineDash([]);
+  g.strokeStyle = 'rgba(240,240,240,0.7)';
+  g.lineWidth = 2;
+  for (const line of ROAD_LINES) {
+    for (const off of [-WORLD.ROAD / 2 + 1, WORLD.ROAD / 2 - 1]) {
+      g.beginPath();
+      g.moveTo(px(line + off), px(-HALF_CITY));
+      g.lineTo(px(line + off), px(HALF_CITY));
+      g.stroke();
+      g.beginPath();
+      g.moveTo(px(-HALF_CITY), px(line + off));
+      g.lineTo(px(HALF_CITY), px(line + off));
+      g.stroke();
     }
-    // Centre dashes (yellow) and edge lines (white) on every road.
-    ctx.fillStyle = '#e8c33a';
-    for (let k = 0; k <= WORLD.GRID; k += 1) {
-      const c = (k - 4.5) * PITCH;
-      for (let d = -HALF_CITY; d < HALF_CITY; d += 12) {
-        ctx.fillRect(px(c - 0.4), px(d), 0.8 * scale, 5 * scale);
-        ctx.fillRect(px(d), px(c - 0.4), 5 * scale, 0.8 * scale);
+  }
+
+  // Zebra crossings at a few intersections.
+  g.fillStyle = 'rgba(240,240,240,0.85)';
+  for (const lx of ROAD_LINES) {
+    for (const lz of ROAD_LINES) {
+      if (rng.chance(0.35)) continue;
+      for (let s = -3; s <= 3; s++) {
+        g.fillRect(px(lx + s * 1.8 - 0.7), px(lz - WORLD.ROAD / 2 + 1), px(1.4) - px(0), px(3) - px(0));
       }
     }
-    ctx.fillStyle = 'rgba(255,255,255,0.85)';
-    for (let k = 0; k <= WORLD.GRID; k += 1) {
-      const c = (k - 4.5) * PITCH;
-      ctx.fillRect(px(c - WORLD.ROAD / 2 + 0.6), px(-HALF_CITY - WORLD.ROAD / 2), 0.5 * scale, (2 * HALF_CITY + WORLD.ROAD) * scale);
-      ctx.fillRect(px(c + WORLD.ROAD / 2 - 1.1), px(-HALF_CITY - WORLD.ROAD / 2), 0.5 * scale, (2 * HALF_CITY + WORLD.ROAD) * scale);
-      ctx.fillRect(px(-HALF_CITY - WORLD.ROAD / 2), px(c - WORLD.ROAD / 2 + 0.6), (2 * HALF_CITY + WORLD.ROAD) * scale, 0.5 * scale);
-      ctx.fillRect(px(-HALF_CITY - WORLD.ROAD / 2), px(c + WORLD.ROAD / 2 - 1.1), (2 * HALF_CITY + WORLD.ROAD) * scale, 0.5 * scale);
-    }
-    // Crosswalks at every intersection.
-    ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    for (let a = 0; a <= WORLD.GRID; a += 1) {
-      for (let b = 0; b <= WORLD.GRID; b += 1) {
-        const x = (a - 4.5) * PITCH;
-        const z = (b - 4.5) * PITCH;
-        for (let s = -5; s <= 5; s += 2) {
-          ctx.fillRect(px(x + s - 0.7), px(z - WORLD.ROAD / 2 + 1), 1.4 * scale, 2.4 * scale);
-          ctx.fillRect(px(x + s - 0.7), px(z + WORLD.ROAD / 2 - 3.4), 1.4 * scale, 2.4 * scale);
-          ctx.fillRect(px(x - WORLD.ROAD / 2 + 1), px(z + s - 0.7), 2.4 * scale, 1.4 * scale);
-          ctx.fillRect(px(x + WORLD.ROAD / 2 - 3.4), px(z + s - 0.7), 2.4 * scale, 1.4 * scale);
-        }
-      }
-    }
-  });
+  }
+
+  // Beach strip and waterline (south, z >= BEACH_Z).
+  g.fillStyle = '#e8d9a8';
+  g.fillRect(px(-300), px(WORLD.BEACH_Z), px(720) - px(0), px(420 - WORLD.BEACH_Z) - px(0));
+  g.fillStyle = 'rgba(255,255,255,0.5)';
+  g.fillRect(px(-300), px(WORLD.BEACH_Z), px(720) - px(0), px(6) - px(0));
+
+  return c;
 }
 
-// A building facade: window grid, some windows lit warm, a darker ground floor.
+// 128x256 facade: 6 columns x 12 rows of windows, ~28% lit warm.
 export function makeFacadeTexture(rng, baseColor) {
-  const cols = 6;
-  const rows = 12;
-  return canvasTexture(128, 256, (ctx, w, h) => {
-    ctx.fillStyle = baseColor;
-    ctx.fillRect(0, 0, w, h);
-    ctx.fillStyle = 'rgba(0,0,0,0.18)';
-    ctx.fillRect(0, h - 26, w, 26);
-    for (let r = 0; r < rows; r += 1) {
-      for (let c = 0; c < cols; c += 1) {
-        const x = 8 + c * 19;
-        const y = 8 + r * 19;
-        const lit = rng.chance(0.28);
-        ctx.fillStyle = lit ? '#ffd98a' : (rng.chance(0.5) ? '#2c3e55' : '#54708c');
-        ctx.fillRect(x, y, 12, 14);
-        ctx.fillStyle = 'rgba(255,255,255,0.25)';
-        ctx.fillRect(x, y, 12, 2);
+  const c = makeCanvas(128, 256);
+  const g = c.getContext('2d');
+  g.fillStyle = baseColor;
+  g.fillRect(0, 0, 128, 256);
+  // Subtle vertical shading.
+  const grad = g.createLinearGradient(0, 0, 128, 0);
+  grad.addColorStop(0, 'rgba(0,0,0,0.18)');
+  grad.addColorStop(0.5, 'rgba(255,255,255,0.08)');
+  grad.addColorStop(1, 'rgba(0,0,0,0.18)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 128, 256);
+  for (let row = 0; row < 12; row++) {
+    for (let col = 0; col < 6; col++) {
+      const x = 8 + col * 20;
+      const y = 8 + row * 20;
+      if (rng.chance(0.28)) {
+        g.fillStyle = '#ffd98a';
+      } else {
+        g.fillStyle = '#2c3542';
       }
+      g.fillRect(x, y, 12, 14);
     }
-  });
+  }
+  return c;
 }
 
-// A shop sign or billboard with bold text.
-export function makeSignTexture(text, bg = '#c22e2e', fg = '#ffe9a8') {
-  return canvasTexture(512, 128, (ctx, w, h) => {
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = fg;
-    ctx.lineWidth = 6;
-    ctx.strokeRect(6, 6, w - 12, h - 12);
-    ctx.fillStyle = fg;
-    ctx.font = '900 56px Trebuchet MS, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, w / 2, h / 2 + 2);
-  });
+// Simple flat sign with centred bold text.
+export function makeSignTexture(text, bg, fg) {
+  const c = makeCanvas(512, 128);
+  const g = c.getContext('2d');
+  g.fillStyle = bg;
+  g.fillRect(0, 0, 512, 128);
+  g.strokeStyle = fg;
+  g.lineWidth = 6;
+  g.strokeRect(6, 6, 500, 116);
+  g.fillStyle = fg;
+  g.font = 'bold 52px Arial, sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(text, 256, 66);
+  return c;
 }
 
-// Gentle waves for the ocean plane.
+// Tiled ocean: deep blue with lighter wave strokes.
 export function makeOceanTexture(rng) {
-  const tex = canvasTexture(256, 256, (ctx, w, h) => {
-    ctx.fillStyle = '#2e7fc2';
-    ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-    ctx.lineWidth = 3;
-    for (let i = 0; i < 26; i += 1) {
-      const y = rng.range(0, h);
-      ctx.beginPath();
-      ctx.moveTo(rng.range(-20, 60), y);
-      ctx.bezierCurveTo(80, y - 8, 160, y + 8, w + 20, y);
-      ctx.stroke();
-    }
-  });
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(6, 6);
-  return tex;
+  const c = makeCanvas(256, 256);
+  const g = c.getContext('2d');
+  g.fillStyle = '#1d6f9e';
+  g.fillRect(0, 0, 256, 256);
+  g.strokeStyle = 'rgba(255,255,255,0.25)';
+  g.lineWidth = 2;
+  for (let i = 0; i < 26; i++) {
+    const x = rng.range(0, 256);
+    const y = rng.range(0, 256);
+    const len = rng.range(14, 42);
+    g.beginPath();
+    g.moveTo(x, y);
+    g.quadraticCurveTo(x + len / 2, y + rng.range(-6, 6), x + len, y + rng.range(-4, 4));
+    g.stroke();
+  }
+  return c;
 }
 
-// Vertical sky gradient for the sky dome.
+// Vertical sunset gradient for the sky dome.
 export function makeSkyTexture() {
-  return canvasTexture(64, 512, (ctx, w, h) => {
-    const grad = ctx.createLinearGradient(0, 0, 0, h);
-    grad.addColorStop(0, '#2f6fb8');
-    grad.addColorStop(0.45, '#7fb3e0');
-    grad.addColorStop(0.72, '#ffd9a0');
-    grad.addColorStop(1, '#ffb37a');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, w, h);
-  });
+  const c = makeCanvas(16, 512);
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, 512);
+  grad.addColorStop(0, '#2e4a7a');
+  grad.addColorStop(0.45, '#e8905a');
+  grad.addColorStop(0.7, '#f7c873');
+  grad.addColorStop(1, '#ffe9b0');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 16, 512);
+  return c;
 }

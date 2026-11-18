@@ -1,5 +1,5 @@
-// Keyboard and mouse input. Keys are read as a held set; `pressed` reports an
-// edge (down this frame only). Dragging the mouse orbits the camera.
+// Keyboard + mouse input. Drag to look, click to shoot.
+
 export const ACTION = {
   ENTER_CAR: 1,
   PUNCH: 2,
@@ -9,98 +9,93 @@ export const ACTION = {
   JUMP: 32,
 };
 
+const KEY_ACTION = {
+  KeyE: ACTION.ENTER_CAR,
+  KeyF: ACTION.PUNCH,
+  Escape: ACTION.PAUSE,
+  KeyP: ACTION.PAUSE,
+  KeyM: ACTION.MISSIONS,
+  KeyR: ACTION.RADIO,
+  Space: ACTION.JUMP,
+};
+
 export function createInput(canvas) {
-  const held = new Set();
-  const pressed = new Set();
-  let mouseDX = 0;
-  let mouseDY = 0;
+  const keys = new Set();
+  let queued = 0;
+  let lookDX = 0;
+  let lookDY = 0;
+  let clickQueued = false;
   let dragging = false;
   let lastX = 0;
   let lastY = 0;
-  let mouseDown = false;
 
-  const KEY_ACTIONS = {
-    KeyE: ACTION.ENTER_CAR,
-    KeyF: ACTION.PUNCH,
-    KeyP: ACTION.PAUSE,
-    Escape: ACTION.PAUSE,
-    KeyM: ACTION.MISSIONS,
-    KeyR: ACTION.RADIO,
-    Space: ACTION.JUMP,
-  };
+  window.addEventListener('keydown', (e) => {
+    if (e.repeat) return;
+    keys.add(e.code);
+    const a = KEY_ACTION[e.code];
+    if (a) queued |= a;
+    if (e.code === 'Space') e.preventDefault();
+  });
+  window.addEventListener('keyup', (e) => keys.delete(e.code));
+  window.addEventListener('blur', () => keys.clear());
 
-  function onKeyDown(event) {
-    if (event.repeat) return;
-    held.add(event.code);
-    pressed.add(event.code);
-    if (event.code === 'Space') event.preventDefault();
-  }
-  function onKeyUp(event) {
-    held.delete(event.code);
-  }
-  function onMouseDown(event) {
+  canvas.addEventListener('mousedown', (e) => {
     dragging = true;
-    lastX = event.clientX;
-    lastY = event.clientY;
-    mouseDown = true;
-    pressed.add('Mouse');
-  }
-  function onMouseMove(event) {
-    if (!dragging) return;
-    mouseDX += event.clientX - lastX;
-    mouseDY += event.clientY - lastY;
-    lastX = event.clientX;
-    lastY = event.clientY;
-  }
-  function onMouseUp() {
+    lastX = e.clientX;
+    lastY = e.clientY;
+    canvas.focus();
+  });
+  window.addEventListener('mouseup', (e) => {
+    if (dragging && Math.abs(e.clientX - lastX) < 6 && Math.abs(e.clientY - lastY) < 6) {
+      clickQueued = true;
+    }
     dragging = false;
-    mouseDown = false;
-  }
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    lookDX += e.clientX - lastX;
+    lookDY += e.clientY - lastY;
+    lastX = e.clientX;
+    lastY = e.clientY;
+  });
 
-  window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('keyup', onKeyUp);
-  canvas.addEventListener('mousedown', onMouseDown);
-  window.addEventListener('mousemove', onMouseMove);
-  window.addEventListener('mouseup', onMouseUp);
-  canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+  function isDown(code) {
+    return keys.has(code);
+  }
 
   return {
-    // -1/0/1 drive and strafe from WASD or the arrow keys.
+    // Movement axis: x = strafe right, z = forward. -1..1.
     axis() {
-      const x = (held.has('KeyD') || held.has('ArrowRight') ? 1 : 0) - (held.has('KeyA') || held.has('ArrowLeft') ? 1 : 0);
-      const y = (held.has('KeyW') || held.has('ArrowUp') ? 1 : 0) - (held.has('KeyS') || held.has('ArrowDown') ? 1 : 0);
-      return { x, y };
+      let x = 0;
+      let z = 0;
+      if (isDown('KeyW') || isDown('ArrowUp')) z += 1;
+      if (isDown('KeyS') || isDown('ArrowDown')) z -= 1;
+      if (isDown('KeyA') || isDown('ArrowLeft')) x -= 1;
+      if (isDown('KeyD') || isDown('ArrowRight')) x += 1;
+      return { x, z };
     },
     run() {
-      return held.has('ShiftLeft') || held.has('ShiftRight');
+      return isDown('ShiftLeft') || isDown('ShiftRight');
     },
     handbrake() {
-      return held.has('Space');
+      return isDown('Space');
     },
-    // Bit mask of the actions pressed since the last takeActions call.
     takeActions() {
-      let mask = 0;
-      for (const code of pressed) {
-        if (KEY_ACTIONS[code]) mask |= KEY_ACTIONS[code];
-      }
-      pressed.clear();
-      return mask;
+      const a = queued;
+      queued = 0;
+      return a;
     },
-    // Mouse drag since the last takeLook call, in pixels.
     takeLook() {
-      const dx = mouseDX;
-      const dy = mouseDY;
-      mouseDX = 0;
-      mouseDY = 0;
-      return { dx, dy };
+      const d = { dx: lookDX, dy: lookDY };
+      lookDX = 0;
+      lookDY = 0;
+      return d;
     },
     clicked() {
-      const was = mouseDown;
-      mouseDown = false;
-      return was;
+      const c = clickQueued;
+      clickQueued = false;
+      return c;
     },
-    isDown(code) {
-      return held.has(code);
-    },
+    isDown,
   };
 }
