@@ -1,2 +1,4 @@
+# Build output written by main.ts (MAKEFUN_OUTPUT_DIR, defaults to /output)
 out/
+# Local dependencies installed with npm install (three.js is vendored in game/vendor instead)
 node_modules/
