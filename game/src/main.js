@@ -11,6 +11,7 @@ import { createTraffic } from './traffic.js';
 import { createPolice } from './police.js';
 import { createCombat } from './combat.js';
 import { createMissions, MISSION_LIST } from './missions.js';
+import { createActivities } from './activities.js';
 import { createHud } from './hud.js';
 import { createAudio } from './audio.js';
 import { loadSave, writeSave } from './save.js';
@@ -56,6 +57,16 @@ if (saved) {
   completed = saved.completed || [];
 }
 
+// --- Progress persistence (missions + coins) ---
+let activities = null;
+function persist() {
+  writeSave({
+    money,
+    completed,
+    coins: activities ? activities.takenIndices() : saved && saved.coins ? saved.coins : [],
+  });
+}
+
 // --- Missions ---
 let hudObjective = '';
 const missions = createMissions(scene, city.landmarks, vehicles, rng, {
@@ -69,7 +80,7 @@ const missions = createMissions(scene, city.landmarks, vehicles, rng, {
   complete: (m) => {
     money += m.reward;
     completed.push(m.id);
-    writeSave({ money, completed });
+    persist();
     audio.complete();
     hud.showToast(`Mission complete! +$${m.reward}`);
     if (completed.length >= MISSION_LIST.length) {
@@ -85,6 +96,17 @@ const missions = createMissions(scene, city.landmarks, vehicles, rng, {
   setWanted: (n) => police.setStars(n),
   completedCount: () => completed.length,
 });
+
+// --- Side activity: Solmar Coins ---
+activities = createActivities(scene, {
+  onCoin: (index, collected, value) => {
+    money += value;
+    hud.showToast(`Solmar Coin +$${value} — ${collected}/${activities.total} found`);
+    audio.pickup();
+    persist();
+  },
+});
+if (saved && saved.coins) activities.restore(saved.coins);
 
 // --- State ---
 let screen = 'title';
@@ -107,7 +129,7 @@ function showScreen(name) {
   }
   if (name === 'pause') {
     const stats = document.getElementById('pause-stats');
-    if (stats) stats.textContent = `Cash $${money.toLocaleString('en-US')} — Jobs done ${completed.length}/5 — Debt $${(10000 - money).toLocaleString('en-US')} to go`;
+    if (stats) stats.textContent = `Cash $${money.toLocaleString('en-US')} — Jobs done ${completed.length}/${MISSION_LIST.length} — Debt $${(10000 - money).toLocaleString('en-US')} to go`;
   }
 }
 
@@ -158,7 +180,7 @@ function onBusted() {
   player.mesh.rotation.y = 0;
   player.health = 100;
   cam.mode = 'foot';
-  writeSave({ money, completed });
+  persist();
   audio.busted();
   showScreen('busted');
 }
@@ -232,7 +254,8 @@ if (btnStart) {
   btnStart.addEventListener('click', () => {
     money = 0;
     completed = [];
-    writeSave({ money, completed });
+    activities.reset();
+    persist();
     player.health = 100;
     player.pos.set(city.playerSpawn.x, 0, city.playerSpawn.z);
     audio.start();
@@ -250,7 +273,7 @@ if (btnContinue) {
     audio.start();
     showScreen('play');
     nextMissionTimer = 0.8;
-    hud.showToast(`Welcome back, Leo. $${money} in the bank, ${completed.length}/5 jobs done.`);
+    hud.showToast(`Welcome back, Leo. $${money} in the bank, ${completed.length}/${MISSION_LIST.length} jobs done.`);
   });
 }
 const btnResume = document.getElementById('btn-resume');
@@ -258,7 +281,7 @@ if (btnResume) btnResume.addEventListener('click', () => showScreen('play'));
 const btnQuit = document.getElementById('btn-quit');
 if (btnQuit) {
   btnQuit.addEventListener('click', () => {
-    writeSave({ money, completed });
+    persist();
     showScreen('title');
   });
 }
@@ -408,6 +431,7 @@ function stepWorld(dt) {
       {
         playerPos: focus,
         inCar: !!playerCar,
+        car: playerCar,
         wanted: police.getStars(),
         playerCarSpeed: playerCar ? Math.abs(playerCar.speed) : 0,
         onRivalHit: () => audio.crash(),
@@ -418,6 +442,16 @@ function stepWorld(dt) {
 
   vehicles.update(dt, time);
   combat.update(dt);
+
+  // Side activity: coins spin always, collect only while really playing.
+  activities.update(dt, focus, time, !shotMode && screen === 'play');
+
+  // Ocean swell + drifting clouds.
+  city.ocean.position.y = 0.08 + Math.sin(time * 0.7) * 0.03;
+  for (const cloud of city.clouds) {
+    cloud.position.x += dt * 0.6;
+    if (cloud.position.x > 430) cloud.position.x = -430;
+  }
 
   // Shot autopilot.
   if (shotMode && shotObj && !shotDone) {
@@ -473,6 +507,8 @@ function stepWorld(dt) {
       speed: playerCar ? playerCar.speed : 0,
       objective: hudObjective,
       hint,
+      coins: { collected: activities.collected, total: activities.total },
+      coinsList: activities.positions,
       target: missions.active
         ? missions.targetPos()
         : shotMode && missions.beacon.visible
@@ -535,6 +571,37 @@ function updateCamera(dt) {
 }
 
 // --- Main loop: fixed-step accumulator ---
+// Read-only debug handle for automated playtests (position + progress).
+window.__debug = {
+  get playerPos() {
+    return { x: player.pos.x, z: player.pos.z, health: player.health };
+  },
+  get driving() {
+    return !!playerCar;
+  },
+  get car() {
+    return playerCar
+      ? { x: playerCar.pos.x, z: playerCar.pos.z, heading: playerCar.heading, speed: playerCar.speed }
+      : null;
+  },
+  get money() {
+    return money;
+  },
+  get completed() {
+    return completed.slice();
+  },
+  get mission() {
+    return { current: missions.current, active: missions.active, objective: hudObjective };
+  },
+  get coins() {
+    return activities ? { collected: activities.collected, total: activities.total } : null;
+  },
+  teleport(x, z) {
+    if (playerCar) exitCar(true);
+    player.pos.set(x, 0, z);
+  },
+};
+
 let last = performance.now();
 let acc = 0;
 function loop(now) {

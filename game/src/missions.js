@@ -34,6 +34,12 @@ export const MISSION_LIST = [
     reward: 2500,
     brief: 'Wreck four rival cars around the bank, then escape to the pier.',
   },
+  {
+    id: 5,
+    title: 'The Last Score',
+    reward: 4700,
+    brief: "Dante's final job: lift the gold Comet from Hotel Palma and run it to the pier in 150 seconds — with the whole force on your tail.",
+  },
 ];
 
 const PIZZA_POINTS = [
@@ -87,12 +93,20 @@ export function createMissions(scene, landmarks, vehicles, rng, events) {
   let rivals = [];
   let rivalState = new Map();
   let ramCooldown = new Map();
+  let goldCar = null;
+  let inGoldCar = false;
+  const GOLD_SPOT = new THREE.Vector3(-58, 0, 260);
 
   function clearRivals() {
     for (const r of rivals) vehicles.remove(r);
     rivals = [];
     rivalState = new Map();
     ramCooldown = new Map();
+    if (goldCar) {
+      vehicles.remove(goldCar);
+      goldCar = null;
+    }
+    inGoldCar = false;
   }
 
   function spawnRival(type, x, z, heading) {
@@ -138,6 +152,13 @@ export function createMissions(scene, landmarks, vehicles, rng, events) {
         [b.x - 26, b.z - 20],
       ];
       spots.forEach(([x, z], k) => spawnRival(k % 2 === 0 ? 'sedan' : 'sports', x, z, rng.range(0, Math.PI * 2)));
+    }
+    if (i === 5) {
+      // The gold Comet waits on the beach road by Hotel Palma.
+      timer = 150;
+      goldCar = vehicles.spawn('sports', GOLD_SPOT.x, GOLD_SPOT.z, Math.PI / 2, 0xffd24d);
+      goldCar.parked = true;
+      events.setWanted(2);
     }
     beacon.visible = true;
     events.toast(`${m.title} — $${m.reward}`);
@@ -296,6 +317,18 @@ export function createMissions(scene, landmarks, vehicles, rng, events) {
         const d = Math.hypot(pp.x - landmarks.pier.x, pp.z - landmarks.pier.z);
         if (d < 12) finishMission();
       }
+    } else if (current === 5) {
+      // The Last Score: steal the gold Comet, run it to the pier.
+      timer -= dt;
+      if (timer <= 0) {
+        failMission('The Comet never made it to the pier.');
+        return;
+      }
+      inGoldCar = ctx.car === goldCar;
+      if (inGoldCar) {
+        const d = Math.hypot(pp.x - landmarks.pier.x, pp.z - landmarks.pier.z);
+        if (d < 12) finishMission();
+      }
     }
   }
 
@@ -309,6 +342,11 @@ export function createMissions(scene, landmarks, vehicles, rng, events) {
       return phase === 'main'
         ? `The Big Score: wreck the rival cars — ${wrecked}/4 down`
         : 'The Big Score: escape to the pier!';
+    }
+    if (current === 5) {
+      return inGoldCar
+        ? `The Last Score: run the Comet to the pier — ${Math.ceil(timer)}s`
+        : `The Last Score: steal the gold Comet at Hotel Palma — ${Math.ceil(timer)}s`;
     }
     return '';
   }
@@ -332,6 +370,10 @@ export function createMissions(scene, landmarks, vehicles, rng, events) {
         }
       }
       return best ? new THREE.Vector3(best.pos.x, 0, best.pos.z) : landmarks.bank.clone();
+    }
+    if (current === 5) {
+      if (inGoldCar) return landmarks.pier.clone();
+      return goldCar ? new THREE.Vector3(goldCar.pos.x, 0, goldCar.pos.z) : GOLD_SPOT.clone();
     }
     return null;
   }

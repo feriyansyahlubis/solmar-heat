@@ -4,6 +4,7 @@ import { WORLD, HALF_CITY, ROAD_LINES } from './config.js';
 
 export function createHud() {
   const moneyEl = document.getElementById('money');
+  const coinsEl = document.getElementById('coins');
   const healthEl = document.getElementById('health');
   const healthFill = healthEl ? healthEl.firstElementChild : null;
   const wantedEl = document.getElementById('wanted');
@@ -88,6 +89,16 @@ export function createHud() {
       mapCtx.arc(toX(car.pos.x), toY(car.pos.z), 2.5, 0, Math.PI * 2);
       mapCtx.fill();
     }
+    // Uncollected Solmar Coins (gold dots).
+    if (state.coinsList) {
+      mapCtx.fillStyle = '#ffd24d';
+      for (const c of state.coinsList) {
+        if (c.taken) continue;
+        mapCtx.beginPath();
+        mapCtx.arc(toX(c.x), toY(c.z), 3, 0, Math.PI * 2);
+        mapCtx.fill();
+      }
+    }
     // Police dots (flashing red/blue).
     const flash = Math.floor(time * 3) % 2 === 0;
     mapCtx.fillStyle = flash ? '#ff3333' : '#3388ff';
@@ -118,6 +129,9 @@ export function createHud() {
 
   function update(state, time) {
     if (moneyEl) moneyEl.textContent = `$${Math.floor(state.money).toLocaleString('en-US')}`;
+    if (coinsEl && state.coins) {
+      coinsEl.textContent = `● Coins ${state.coins.collected}/${state.coins.total}`;
+    }
     if (healthFill) {
       healthFill.style.width = `${Math.max(0, Math.min(100, state.health))}%`;
       healthFill.style.background = state.health > 50 ? '#4ecdc4' : state.health > 25 ? '#f5a623' : '#e74c3c';

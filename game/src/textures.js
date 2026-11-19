@@ -5,6 +5,7 @@ import { WORLD, PITCH, HALF_CITY, ROAD_LINES } from './config.js';
 export const FACADE_COLORS = [
   '#e8a87c', '#d98e6a', '#f0c297', '#c97b5e', '#e5b567',
   '#d9a05b', '#eab676', '#c68a6b', '#f2d3a0', '#b5765a',
+  '#7fb5a3', '#e07856', '#f5f0e6', '#8fb8d8', '#c9a0c9', '#a8c686',
 ];
 
 function makeCanvas(w, h) {

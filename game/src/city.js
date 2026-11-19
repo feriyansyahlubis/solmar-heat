@@ -154,6 +154,38 @@ export function buildCity(scene, rng) {
   const hemi = new THREE.HemisphereLight(0xbfd9ff, 0x8a6b4a, 1.15);
   group.add(hemi);
 
+  // Sun disc hanging in the sky, same direction as the light.
+  const sunDisc = new THREE.Mesh(
+    new THREE.CircleGeometry(34, 32),
+    new THREE.MeshBasicMaterial({ color: 0xfff3c4, fog: false }),
+  );
+  sunDisc.position.copy(sunDir).multiplyScalar(820);
+  sunDisc.lookAt(0, 0, 0);
+  group.add(sunDisc);
+
+  // Drifting clouds: soft white blobs high above the city.
+  const cloudMat = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.85,
+    fog: false,
+  });
+  const clouds = [];
+  for (let i = 0; i < 7; i++) {
+    const cloud = new THREE.Group();
+    const puffs = 3 + Math.floor(rng.next() * 3);
+    for (let p = 0; p < puffs; p++) {
+      const r = rng.range(6, 13);
+      const puff = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 8), cloudMat);
+      puff.position.set(p * rng.range(7, 11) - puffs * 4, rng.range(-1.5, 1.5), rng.range(-4, 4));
+      puff.scale.y = 0.45;
+      cloud.add(puff);
+    }
+    cloud.position.set(rng.range(-380, 380), rng.range(110, 170), rng.range(-320, 320));
+    group.add(cloud);
+    clouds.push(cloud);
+  }
+
   // Facade material cache keyed by colour.
   const facadeCache = new Map();
   function facadeMat(color) {
@@ -304,6 +336,47 @@ export function buildCity(scene, rng) {
     group.add(top);
   }
 
+  // Benches along the central avenue sidewalks.
+  const benchWood = new THREE.MeshStandardMaterial({ color: 0x9a6b3f, roughness: 0.85 });
+  const benchIron = new THREE.MeshStandardMaterial({ color: 0x3a3f45, roughness: 0.6, metalness: 0.5 });
+  for (const [bx, bz, rot] of [
+    [-40.5, -120, 0],
+    [40.5, -40, Math.PI],
+    [-40.5, 60, 0],
+    [40.5, 160, Math.PI],
+    [-40.5, 200, 0],
+    [40.5, -200, Math.PI],
+  ]) {
+    const bench = new THREE.Group();
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.12, 0.6), benchWood);
+    seat.position.y = 0.5;
+    seat.castShadow = true;
+    bench.add(seat);
+    const back = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.6, 0.1), benchWood);
+    back.position.set(0, 0.85, -0.28);
+    bench.add(back);
+    for (const lx of [-0.9, 0.9]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.5, 0.55), benchIron);
+      leg.position.set(lx, 0.25, 0);
+      bench.add(leg);
+    }
+    bench.position.set(bx, 0, bz);
+    bench.rotation.y = rot;
+    group.add(bench);
+  }
+
+  // Beach balls on the sand.
+  const ballColors = [0xff5252, 0xffd24d, 0x4ecdc4, 0xff9f43, 0x54a0ff];
+  for (let i = 0; i < 5; i++) {
+    const ball = new THREE.Mesh(
+      new THREE.SphereGeometry(0.55, 12, 10),
+      new THREE.MeshStandardMaterial({ color: ballColors[i], roughness: 0.5 }),
+    );
+    ball.position.set(-180 + i * 85 + rng.range(-12, 12), 0.55, 292 + rng.range(0, 18));
+    ball.castShadow = true;
+    group.add(ball);
+  }
+
   // Pier planks z 318-380 at x = 0.
   const plankMat = new THREE.MeshStandardMaterial({ color: 0x8a6b45, roughness: 0.9 });
   for (let z = 318; z <= 380; z += 4) {
@@ -337,6 +410,7 @@ export function buildCity(scene, rng) {
     roads: { xLines: ROAD_LINES, zLines: ROAD_LINES },
     ocean,
     sun,
+    clouds,
     playerSpawn: new THREE.Vector3(-174, 0, -44),
   };
 }
